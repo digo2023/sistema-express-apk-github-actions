@@ -3,42 +3,62 @@ name: Gerar APK Android
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
+    paths:
+      - 'projeto_apk/**'
+      - '.github/workflows/build-apk.yml'
 
 jobs:
-  build:
+  build-android:
+    name: Compilar APK com Buildozer
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
-      - name: Baixar código
+      - name: Baixar código do repositório
         uses: actions/checkout@v4
 
-      - name: Configurar cache Buildozer
+      - name: Conferir estrutura do projeto
+        shell: bash
+        run: |
+          echo "Arquivos na raiz do repositório:"
+          ls -la
+          echo "Arquivos em projeto_apk:"
+          ls -la projeto_apk
+          test -f projeto_apk/main.py || (echo "ERRO: projeto_apk/main.py não encontrado" && exit 1)
+          test -f projeto_apk/buildozer.spec || (echo "ERRO: projeto_apk/buildozer.spec não encontrado" && exit 1)
+
+      - name: Cache Buildozer
         uses: actions/cache@v4
         with:
           path: |
             ~/.buildozer
-            .buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+            projeto_apk/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('projeto_apk/buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
 
-      - name: Instalar dependências do sistema
+      - name: Compilar APK
+        id: buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        with:
+          workdir: projeto_apk
+          buildozer_version: stable
+          command: buildozer android debug
+
+      - name: Localizar APK gerado
+        shell: bash
         run: |
-          sudo apt update
-          sudo apt install -y python3 python3-pip python3-setuptools python3-wheel git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 cmake libffi-dev libssl-dev
+          echo "APKs encontrados:"
+          find projeto_apk -type f -name "*.apk" -print
+          mkdir -p artifacts
+          cp projeto_apk/bin/*.apk artifacts/ || true
+          test -n "$(ls -A artifacts/*.apk 2>/dev/null)" || (echo "ERRO: nenhum APK foi gerado" && exit 1)
 
-      - name: Instalar Buildozer
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install buildozer cython
-
-      - name: Gerar APK
-        run: |
-          buildozer android debug
-
-      - name: Enviar APK como artefato
+      - name: Enviar APK para download
         uses: actions/upload-artifact@v4
         with:
-          name: SISTEMA-EXPRESS-APK
-          path: bin/*.apk
+          name: Sistema-Express-APK-debug
+          path: artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 30
